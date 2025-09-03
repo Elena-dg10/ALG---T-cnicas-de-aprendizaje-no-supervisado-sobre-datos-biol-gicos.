@@ -1,0 +1,376 @@
+---
+title: "Aplicación de técnicas de aprendizaje no supervisado sobre datos biológicos"
+output: html_document
+date: "2025-04-24"
+---
+
+# Introducción y tratamiento de datos
+
+En esta actividad se propone realizar una comparación entre los distintos metodos de análisis no supervisado vistos en clase. Para ello prepararemos el entorno de trabajo, cargando las librerías y haciendo un primer procesamiento y limpieza de los datos.
+
+En mi caso tenía la práctica desarrollada con la base de datos de RNAseq como se indicó en un primer momento por el foro, por lo que es con la que he realizado todos los análisis.
+
+Para poder representar algunos de los gráficos vamos a necesitar el repositorio de CRAN, que contiene la librería ggfortify, entre otras, por lo que accedemos a él.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+
+```
+
+```{r}
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+install.packages("ggfortify", repos = "https://cloud.r-project.org/")
+```
+
+```{r}
+install.packages("Rtsne")
+install.packages("dimRed")
+library(ggfortify)
+library(dimRed)
+library(ggplot2)
+library(stats)
+library(RDRToolbox)
+library(Rtsne)
+#Instalamos RDRToolbox para poder utilizar Isomap()
+ if (!requireNamespace("BiocManager", quietly=TRUE))
+    install.packages("BiocManager")
+BiocManager::install("RDRToolbox", force = TRUE)
+```
+
+Cargamos en el entorno de trabajo los datasets con los que trabajaremos. En este caso datos relativos al cáncer. No realizaré ninguna reducción filtrando manualmente ya que espero que los propios análisis lo hagan. Además, seleccionar aleatoriamente un número de datos con los que trabajar puede afectar a los modelos que vamos a emplear.
+
+```{r}
+df_data <- read.csv("/Users/emmettdiez/Desktop/data.csv")
+df_labels <- read.csv("/Users/emmettdiez/Desktop/labels.csv")
+```
+
+A continuación, comprobamos si tenemos NA y valores cero en el dataframe.
+
+-   En las dos primeras líneas tenemos las funciones que comprueban si existen (TRUE) o no (FALSE) valores NA.
+
+-   Las tres siguients líneas comprueban si existen (TRUE) o no (FALSE) columnas que sean cero, y las eliminamos.
+
+```{r}
+anyNA (df_data)
+NA_columnas <- colSums((is.na(df_data)))
+any(df_data == 0)
+Ceros_columnas <- colSums(df_data == 0)
+all(df_data$gene_0 == 0) 
+df_data <- df_data[, !(names(df_data) == "gene_0")] 
+```
+
+Ahora vamos a trabajar en los modelos de reducción de dimensionalidad. En mi caso particular he decidido comparar: PCA, MDS, Isomap, t-SNE ya que son los modelos más sencillos, y donde, con el nivel que estoy adquiriendo, me va a ser más fácil comparar los resultados y su efectividad.
+
+## PCA : ANÁLISIS DE COMPONENTES PRINCIPALES
+
+En primer lugar, tengo una columna con datos no estrictamente numéricos que la función del PCA prcomp() no puede leer. Filtro solo las columnas numéricas.
+
+```{r}
+df_numeric <- df_data[sapply(df_data, is.numeric)]
+```
+
+Aplicamos prcomp () que es la función del PCA:
+
+-   Con el parámetro `center = TRUE` le indico que centre las variables (le resta a cada valor su media). Esto se recomienda en el PCA para que las variables queden alrededor de cero.
+
+-   `scale. = FALSE` no escala las variables (**no divide por la desviación estándar)**. Esto podemos hacerlo porque todas nuestras variables tienen la misma unidad.
+
+```{r}
+pca.cancer <- prcomp(df_numeric, center = TRUE, scale. = FALSE)
+```
+
+Pasamos los datos PCA a un data frame para poder representarlos.
+
+```{r}
+df_pca <- as.data.frame(pca.cancer$x) 
+```
+
+Añadimos al data frame creado las columnas del dataframe labels.
+
+```{r}
+df_pca_labeled <- cbind(df_pca, df_labels) 
+```
+
+Podemos ver de manera resumida la varianza y la desviacion tipica de cada componente.
+
+```{r}
+summary(pca.cancer)
+```
+
+Es interesante calcular las varianzas para ver qué componente explica más cantidad de datos. Miramos también el total de la varianza de los datos. La tercera línea de código nos indica cuánta varianza va explicándose por cada componente principal. La primera variable es capaz de epxlicar más cantidad de datos que la siguiente y así sucesivamente. Por último, introduzco un comando que me indica cuántas variables necesitaría para explicar al menos el 90% de mis datos. En este caso necesito las 311 primeras variables.
+
+```{r}
+varianzas <- pca.cancer$sdev^2
+total.varianza <- sum(varianzas)
+varianza.explicada <- varianzas/total.varianza
+varianza.acumulada <- cumsum(varianza.explicada) 
+n.pc <- min(which(varianza.acumulada>0.9))
+```
+
+### Representación gráfica PC1 y PC2.
+
+Hacemos un plot rápido con la función autoplot a modo de resumen para ver cómo se comportan las clases de cáncer. Usamos el parámetro de Rmarkdown `echo = FALSE` para evitar que en el documento final aparezca todo el código y solo veamos el gráfico.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+autoplot(pca.cancer)
+```
+
+A continuación con la librería `ggplot2` haremos un gráfico más detallado. Lo primero es etiquetar los ejes del gráfico.
+
+1.  Etiquetamoss los ejes del gráfico (`x_label, y_label`) y extraemos proporcion de varianza explicada de PC1 y PC2. Esto es imporante porque al reducir a dos componentes pierdo información, y así sabré el porcentaje de información(varianza) que conservo en mi gráfico.
+2.  Con `round [2]` redondeamos el porcentaje al segundo decimal.
+3.  `Paste` nos une cada PC con sus valores correspondientes y añade el símbolo % al final.
+
+```{r}
+x_label <- paste(paste('PC1', round(varianza.explicada[1] * 100, 2)), "%") 
+y_label <- paste(paste('PC2', round(varianza.explicada[2] * 100, 2)), "%")
+```
+
+Para realizar el gráfico indicaremos algunos aspectos de formato:
+
+1.  `aes()` definimos las estéeticas del gráfico (ejes, coloración de los datos...).
+2.  `scale_color_manual` indicaremos manualmente los colores por cada clase.
+3.  `geom_point(size=)` indicamos que queremos los datos con puntos y su tamaño.
+4.  `labs()` sirve para personalizar las etiquetas del gráfico.
+5.  `theme_classic() y theme()` aplicamos tema clásico al gráfico y personalizamos elementos como líneas de cuadrícula, color del panel o tamaño y posición del título.
+
+```{r}
+ggplot(df_pca_labeled, aes(x = PC1, y = PC2, color = Class)) + geom_point(size = 3) + scale_color_manual(values = c('red', 'blue', 'green', 'orange', "purple")) + labs(title = 'PCA - Types of Cancer', x = x_label, y = y_label, color = 'Class') + theme_classic() + theme( panel.grid.major = element_line(color = "gray90"), panel.grid.minor = element_blank(), panel.background = element_rect(fill = "gray95"), plot.title = element_text(hjust = 0.5) )
+```
+
+En el gráfico vemos que los tipos de cáncer BCRA, COAD y LUAD se entremezclan. Esto quiere decir que, aunque son tres tipos de cancer distintos, compartirán mucha expresion génica del mismo tipo de genes. No son iguales porque se diferencian en algunos genes, pero tienen muchos que compraten.
+
+## MDS : MULTIDIMEMSIONAL SCALING ANALISYS
+
+Vamos a hacer un análisis multidimensional métrico donde representaremos las distancias manteniendo lo más fielmente posible los valores absolutos de las distancias originales.
+
+Calculamos la matriz de distancias euclídeas:
+
+```{r}
+distancias <- dist(df_numeric, method = "euclidean")
+```
+
+Usamos la función **cmdscale()** para realizar el análisis, que tiene los siguientes parámetros:
+
+-   `eig = TRUE` indicacion para que me incluya los autovalores para saber qué variabilidad todal explica cada dimensión.
+
+-   `k = 2` son las dimensiones, en este caso elijo dos ya que es lo equivalente a mis PC1 y PC2 del análisis anterior.
+
+-   `x.ret = TRUE` indica que quiero incluir las coordenadas originales y no solo las proyectadas en el gráfico.
+
+```{r}
+mds_resultados <- cmdscale(distancias, eig=TRUE, k=2, x.ret=TRUE)
+
+```
+
+A continuación, calculamos la varianza explicada por el modelo y construimos un dataframe con los puntos obtenidos con el MDS. Finalmente, la tercera línea de código une el dataframe labels con el que contiene los resultados del MDS.
+
+```{r}
+varianza_explicada <- mds_resultados$eig/sum(mds_resultados$eig)*100
+dataframe_mds <- data.frame(mds_resultados$points)
+dataframe_mds_completo <- cbind(dataframe_mds, df_labels)
+```
+
+### Representación gráfica Dimensión 1 y Dimensión 2
+
+```{r}
+ggplot(dataframe_mds_completo, aes(x=X1, y=X2, color=Class)) +
+  geom_point(size=1) +
+  scale_color_manual(values = c("red","blue","green","orange","purple"))+
+  labs(title = "MDS - Tipos de Cáncer", x="Dimension 1 (X1)", y = "Dimension 2 (X2)", Color = "Class") +
+  theme_classic() +
+  theme(panel.grid.major = element_line(color = "grey90"), panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "grey95"), plot.title = element_text(hjust=0.5))
+
+```
+
+Vemos que, BRCA y LUAD pueden compartir ciertas **vías celulares**, **mutaciones** o **patrones de expresión**. Por ello, aparecen más próximos y entremezclados que los grupos de KRIC y PRAD que distan más.
+
+## ISOMETRIC MAPPING : RELACIONES NO LINEALES
+
+Como vimos en la correspondiente clase, el **Isometric Mapping** nos sirve para encontrar aquellas relaciones no lineales que tanto el PCA como el MDS no son capaces de encontrar.
+
+Para realizar este análisis usaremos la función `isomap()`, que tiene los siguientes parámetros:
+
+-   Los datos deben estar en forma de matriz para ser procesados, por lo que es el primer paso a seguir.
+
+-   `dim = 1:10` me sirve para definir el rango de dimensiones que quiero probar. Puedes fijar un número en concreto si lo deseas.
+
+-   `k = 5` es el número de vecinos más cercanos (k-nearest neighbors) que serán considerados al construir el gráfico de distancias.
+
+-   `plotResiduals = TRUE` indica que se dibujará el gráfico de resíduos en contraposición al número de dimensiones, para buscar el número óptimo de dimensiones. Suele usarse la **regla del codo** que es el punto a partir del cual los residuos se estabilizan.
+
+Para poder usar isomap debo generarme un matriz para que pueda leer mis datos.
+
+```{r}
+df_matrix <- as.matrix(df_numeric)
+isomap_resultados <- Isomap(data = df_matrix, dim = 1:10, k = 30, plotResiduals = TRUE)
+```
+
+Antes de representarlos, volvemos a unir nuestros datos con sus etiquetas correspondientes del dataframe labels:
+
+```{r}
+df_isomap_coords <- as.data.frame(isomap_resultados$data$data)
+df_isomap <- cbind(isomap_resultados, df_labels)
+```
+
+### Representación gráfica Dimensión 1 y Dimensión 2
+
+```{r}
+ggplot(df_isomap, aes(x=dim1, y=dim2.1, color=Class)) +
+  geom_point(size = 1) +
+  scale_color_manual(values = c("red","blue","green","orange","purple"))+
+  labs(title = "Isomap - Tipos de Cáncer", x="Dimension 1", y = "Dimension 2", color = "Class") +
+  theme_classic() +
+  theme(panel.grid.major = element_line(color = "grey90"), panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "grey95"), plot.title = element_text(hjust=0.5))
+```
+
+El gráfico no muestra relaciones no lineales ya sea porque los datos tienen una estructura lineal, o bien, porque haya demasiadas variables. Puesto que me inclino hacia la segunda opción, reduzco las dimensiones con otro PCA:
+
+```{r}
+# Elimino las columnas de varianza baja.
+df_filtrado_novar <- df_numeric[, apply(df_numeric, 2, var) > 0.01]
+#Aplico el PCA cogiendo las 30 primeras componentes.
+pca_res <- prcomp(df_filtrado_novar, center = TRUE, scale. = TRUE)
+df_pca_isomap <- pca_res$x[, 1:30] 
+```
+
+Ahora que hemos reducido las dimensiones, aplicamos el isomap() a los datos obtenidos con PCA:
+
+```{r}
+iso_res <- Isomap(data = as.matrix(df_pca_isomap), dim = 1:10, k = 10, plotResiduals = TRUE)
+```
+
+Como hice anteriormente, para poder representar los resultados de isomap() hago un dataframe con las dos primeras dimensiones de Isomap:
+
+```{r}
+df_isomap_coords <- data.frame(
+  Dim1 = iso_res$dim2[,1],
+  Dim2 = iso_res$dim2[,2]
+)
+# Añado las etiquetas de las clases de cáncer:
+df_isomap_coords$Class <- df_labels$Class
+
+```
+
+## Representación gráfica:
+
+```{r}
+library(ggplot2)
+
+ggplot(df_isomap_coords, aes(x = Dim1, y = Dim2, color = Class)) +
+  geom_point(size = 2) +
+  scale_color_manual(values = c("red", "blue", "green", "orange", "purple")) +
+  labs(title = "Isomap tras reducción con PCA", x = "Dimensión 1", y = "Dimensión 2", color = "Clase") +
+  theme_classic() +
+  theme(
+    panel.grid.major = element_line(color = "grey90"), 
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(fill = "grey95"),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+```
+
+Este gráfico muestra bastante dispersión en los grupos KIRC y COAD junto con LUAD. Sin embaro, también están entremezclados PRAD con BRCA. Esto nos llevaría a pensar que estos dos últimos tipos de cáncer sean más parecidos molecularmente (compartan más genes) mientras que los otros se diferencian más. Por otro lado, hay algunos puntos esporádicos de COAD y LUAD que podrían haberse mezclado por errores de procesamiento o toma de daros, así como por algún caso aislado biológicamente hablando.
+
+## T-SNE MODELOS LINEALES
+
+El t-SNE es una técnica **no lineal** de **exploración** y **visualización** de datos. Se utiliza fundamentalmente para visualizar **datos de alta dimensión en espacios de baja dimensión (2D y 3D)**.
+
+Antes de comenzar con el análisis, para poder aplicar t-SNE necesito reducir la dimensionalidad de las muestras porque sino produce errores o tardar demasiado en computarlo.
+
+```{r}
+# Seleccionamos aleatoriamente 500 muestras del conjunto de datos:
+set.seed(123)
+df_prefiltrado <- sample(1:nrow(df_numeric), 500)
+df_filtrado <- df_numeric[df_prefiltrado, ]
+```
+
+Aplicamos la función del t-SNE, pero sigue produciendo errores porque tengo demasiadas columnas y la función no maneja bien estas magnitudes de datos.
+
+Para solucionarlo, reduzco las dimensiones aun más aplicando un PCA sobre el que después haré el t-SNE.
+
+-   PCA para reducir columnas. Elimino primero las columnas con varianza cero.
+
+-   Centro y escalo las variables.
+
+-   Elijo los 30 primeros componentes que explican la mayor variabilidad.
+
+```{r}
+# Elimino las columnas con varianza cero.
+  df_filtrado_novar <- df_filtrado[, apply(df_filtrado, 2, var) != 0]
+  # Aplico el PCA para reducir a 30 variables o componentes principales.
+  pca_res <- prcomp(df_filtrado_novar, center = TRUE, scale. = TRUE)
+  df_pca_tsne <- pca_res$x[, 1:30]
+```
+
+Realizo el `t-SNE` sobre los resultados del PCA, que cuenta con los siguientes parámetros:
+
+-   `Rtsne()` es la función que **aplica el algoritmo t-SNE** en R.
+
+-   `dim = 2` me reduce a las dimensiones que le indique para hacer el gráfico (2D en este caso).
+
+-   `perplexity = 30` es el número que controla cuántos vecinos considera t-SNE para cada punto.
+
+-   `verbose = TRUE` muestra por consola el progreso o iteraciones.
+
+-   `max_iter = 500` número máximo de iteraciones del elgoritmo.
+
+```{r}
+tsne <- Rtsne(df_pca_tsne, dims = 2, perplexity = 30, verbose = TRUE, max_iter = 500)
+```
+
+### Representación gráfica
+
+Pasamos los datos del t-sne a data.frame para poder graficarlos. Luego los unimos con las etiquetas de df_labels.
+
+```{r}
+tsne_resultado <- data.frame(tsne$Y)
+df_labels_filtrado <- df_labels[df_prefiltrado, ]  # este es el que coincide con las 500 filas
+tsne_resultado_final <- cbind(tsne_resultado, df_labels_filtrado)
+```
+
+Realizamos el gráfico:
+
+```{r}
+ggplot(tsne_resultado_final, aes(x = X1, y = X2, color = Class)) +
+  geom_point(size = 1) +
+  scale_color_manual(values = c("red", "blue", "green", "orange", "purple")) +
+  labs(title = "tSNE - Tipos de Cáncer", x = "Dim 1", y = "Dim 2", color = "Clase") +
+  theme_classic() +
+  theme(
+    panel.grid.major = element_line(color = "grey90"),
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(fill = "grey95"),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+```
+
+En este modelo podríamos pensar que cada tipo de cáncer tiene una base molecular distinta puesto que los grupos no están tan entremezclados ni pegados como en los otros análisis.
+
+# Comparación de los modelos de reducción de dimensionalidad
+
+#### MODELO ANÁLISIS DE COMPONENTES PRINCIPALES (PCA)
+
+El modelo PCA trata los datos para **maximizar la varianza** en las primeras dimensiones.
+
+En el gráfico, la separación es bastante buena, parecida a MDS, pero no tan nítida como en Isomap o t-SNE. Hay mezclas entre algunas clases, como BRCA y LUAD que podrían ser causa biológica, o ruido del modelo. La limitación del PCA es que asume que las relaciones son **lineales**, por eso puede perder información si la estructura real es más compleja.
+
+#### MODELO MULTIDIMENSIONAL SCALING
+
+El modelo MDS busca preservar las **distancias** entre los datos.
+
+Gráficamente **l**ogra una separación razonable de los tipos de cáncer, aunque se observa solapamiento, especialmente entre BRCA (rojo) y LUAD (naranja). Sin embargo, no maneja bien estructuras no lineales.
+
+#### MODELO ISOMAP 
+
+El Isomap supera a MDS porque preserva distancias más directas y la estructura geodésica del espacio de datos, que se traduce en mayor representación de las relaciones no únicamente lineales.
+
+Gráficamente la separación entre clases es más clara, aunque algunos tipos como PRAD (morado) muestran mayor dispersión interna y algún solapamiento. La ventaja de este modelo es que funciona bien cuando los datos tienen formas curvas o no lineales.
+
+#### MODELO DISTRIBUTED STOCHASTIC NEIGHBOR EMBEDDING (t-SNE)
+
+El modelo t-SNE se centra en preservar relaciones locales, es decir, que muestras cercanas en alta dimensión sigan estando cerca en el mapa reducido. Visualmente ofrece una separación muy clara entre los tipos de cáncer, sin apenas solapamiento. Entre sus limitaciones, el t-SNE no respeta bien las distancias globales (entre grupos lejanos).
