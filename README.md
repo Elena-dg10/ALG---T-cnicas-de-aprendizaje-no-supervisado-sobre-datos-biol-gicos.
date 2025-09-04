@@ -1,4 +1,4 @@
-# 🎭Técnicas de aprendizaje no supervisado sobre datos biológicos.
+# 🎭Tecnicas de aprendizaje no supervisado sobre datos biologicos.
 En este caso práctico aplicaré algoritmos de aprendizaje no supervisado para detectar patrones y frecuencias de los distintos tipos de cáncer en el conjunto de datos biológicos propuesto.
 
 🧬 La **base de datos** consta de dos **archivos** .csv, un **data.csv** que contiene las muestras de cada paciente con los datos de expresión génica, y otro denominado **labels.csv** con los tipos de cáncer asociados.
